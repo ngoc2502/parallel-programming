@@ -124,9 +124,14 @@ void writePnm(uint8_t * pixels, int numChannels, int width, int height,
 __global__ void convertRgb2GrayKernel(uint8_t * inPixels, int width, int height, 
 		uint8_t * outPixels)
 {
-	// TODO
-    // Reminder: gray = 0.299*red + 0.587*green + 0.114*blue  
+    // gray = 0.299*red + 0.587*green + 0.114*blue  
+	int r = blockIdx.y * blockDim.y + threadIdx.y;
+	int c = blockIdx.x*blockDim.x+threadIdx.x;
 
+	if (r<width && c< height){
+		int i = r * height +c;
+		outPixels[i]=0.299*inPixels[3*i]+ 0.587*inPixels[3*i +1] + 0.114*inPixels[3*i +2];
+	}
 }
 
 void convertRgb2Gray(uint8_t * inPixels, int width, int height,
@@ -137,7 +142,7 @@ void convertRgb2Gray(uint8_t * inPixels, int width, int height,
 	timer.Start();
 	if (useDevice == false)
 	{
-        // Reminder: gray = 0.299*red + 0.587*green + 0.114*blue  
+        // gray = 0.299*red + 0.587*green + 0.114*blue  
         for (int r = 0; r < height; r++)
         {
             for (int c = 0; c < width; c++)
@@ -157,15 +162,26 @@ void convertRgb2Gray(uint8_t * inPixels, int width, int height,
 		printf("GPU name: %s\n", devProp.name);
 		printf("GPU compute capability: %d.%d\n", devProp.major, devProp.minor);
 
-		// TODO: Allocate device memories
+		//Allocate device memories
+		uint8_t * d_inPixels,d_outPixels;
 
-		// TODO: Copy data to device memories
+		cudaMalloc( &d_inPixels, width*height*3*sizeof(uint8_t));
+		cudaMalloc( &d_outPixels, width*height*sizeof(uint8_t));
+		
+		//Copy data to device memories
+		cudaMemcpy(d_inPixels,inPixels ,width*height*3*sizeof(uint8_t) , cudaMemcpyHostToDevice)
+		cudaMemcpy(d_outPixels,outPixels ,width*height*sizeof(uint8_t) , cudaMemcpyHostToDevice)
 
-		// TODO: Set grid size and call kernel (remember to check kernel error)
-
-		// TODO: Copy result from device memories
-
-		// TODO: Free device memories
+		//Set grid size and call kernel (remember to check kernel error)
+		dim3 gridSize((width-1)/blockSize.x+1,(height-1)/blockSize.y+1);
+		convertRgb2GrayKernel<<<gridSize,blockSize>>>(d_inPixels,width,height,d_outPixels);
+		cudaError_t errSyn= cudaGetLastError();
+		cudaError_t errAsyn = cudaDeviceSynchronize()();
+		//Copy result from device memories
+		CHECK(cudaMemcpy( outPixels, d_outPixels,width*height*sizeof(uint8_t) , cudaMemcpyDeviceToHost))
+		//Free device memories
+		CHECK(cudaFree( d_inPixels));
+		CHECK(cudaFree( d_outPixels));
 
 	}
 	timer.Stop();
