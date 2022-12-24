@@ -1,16 +1,20 @@
+// Last update: 16/12/2020
 #include <stdio.h>
 #include <stdint.h>
 
+__device__ int bCount = 0;
+volatile __device__ int bCount1 = 0;
+
 #define CHECK(call)\
 {\
-	const cudaError_t error = call;\
-	if (error != cudaSuccess)\
-	{\
-		fprintf(stderr, "Error: %s:%d, ", __FILE__, __LINE__);\
-		fprintf(stderr, "code: %d, reason: %s\n", error,\
-				cudaGetErrorString(error));\
-		exit(EXIT_FAILURE);\
-	}\
+    const cudaError_t error = call;\
+    if (error != cudaSuccess)\
+    {\
+        fprintf(stderr, "Error: %s:%d, ", __FILE__, __LINE__);\
+        fprintf(stderr, "code: %d, reason: %s\n", error,\
+                cudaGetErrorString(error));\
+        exit(1);\
+    }\
 }
 
 struct GpuTimer
@@ -33,6 +37,7 @@ struct GpuTimer
     void Start()
     {
         cudaEventRecord(start, 0);
+        cudaEventSynchronize(start);
     }
 
     void Stop()
@@ -49,217 +54,316 @@ struct GpuTimer
     }
 };
 
-void readPnm(char * fileName, 
-		int &width, int &height, uchar3 * &pixels)
+// Sequential Radix Sort
+void sortByHost(const uint32_t * in, int n,
+                uint32_t * out)
 {
-	FILE * f = fopen(fileName, "r");
-	if (f == NULL)
-	{
-		printf("Cannot read %s\n", fileName);
-		exit(EXIT_FAILURE);
-	}
+    int * bits = (int *)malloc(n * sizeof(int));
+    int * nOnesBefore = (int *)malloc(n * sizeof(int));
 
-	char type[3];
-	fscanf(f, "%s", type);
-	
-	if (strcmp(type, "P3") != 0) // In this exercise, we don't touch other types
-	{
-		fclose(f);
-		printf("Cannot read %s\n", fileName); 
-		exit(EXIT_FAILURE); 
-	}
+    uint32_t * src = (uint32_t *)malloc(n * sizeof(uint32_t));
+    uint32_t * originalSrc = src; // To free memory later
+    memcpy(src, in, n * sizeof(uint32_t));
+    uint32_t * dst = out;
 
-	fscanf(f, "%i", &width);
-	fscanf(f, "%i", &height);
-	
-	int max_val;
-	fscanf(f, "%i", &max_val);
-	if (max_val > 255) // In this exercise, we assume 1 byte per value
-	{
-		fclose(f);
-		printf("Cannot read %s\n", fileName); 
-		exit(EXIT_FAILURE); 
-	}
+    // Loop from LSB (Least Significant Bit) to MSB (Most Significant Bit)
+	// In each loop, sort elements according to the current bit from src to dst 
+	// (using STABLE counting sort)
+    for (int bitIdx = 0; bitIdx < sizeof(uint32_t) * 8; bitIdx++)
+    {
+        // Extract bits
+        for (int i = 0; i < n; i++)
+            bits[i] = (src[i] >> bitIdx) & 1;
 
-	pixels = (uchar3 *)malloc(width * height * sizeof(uchar3));
-	for (int i = 0; i < width * height; i++)
-		fscanf(f, "%hhu%hhu%hhu", &pixels[i].x, &pixels[i].y, &pixels[i].z);
+        // Compute nOnesBefore
+        nOnesBefore[0] = 0;
+        for (int i = 1; i < n; i++)
+            nOnesBefore[i] = nOnesBefore[i-1] + bits[i-1];
 
-	fclose(f);
-}
-
-void writePnm(uchar3 * pixels, int width, int height, 
-		char * fileName)
-{
-	FILE * f = fopen(fileName, "w");
-	if (f == NULL)
-	{
-		printf("Cannot write %s\n", fileName);
-		exit(EXIT_FAILURE);
-	}	
-
-	fprintf(f, "P3\n%i\n%i\n255\n", width, height); 
-
-	for (int i = 0; i < width * height; i++)
-		fprintf(f, "%hhu\n%hhu\n%hhu\n", pixels[i].x, pixels[i].y, pixels[i].z);
-	
-	fclose(f);
-}
-
-__global__ void blurImgKernel(uchar3 * inPixels, int width, int height, 
-		float * filter, int filterWidth, 
-		uchar3 * outPixels)
-{
-	// TODO
-	if (r < height && c < width)
-    { 
-		uchar3 inMtx[300];
-		int idx = 0;
-		int t1=0, t2=0;
-    float j=0,jj=0,jjj=0;
-		for (int m = r - ((filterWidth - 1) / 2); m <= r + ((filterWidth - 1) / 2); m++){
-			for (int n = c - ((filterWidth - 1) / 2); n <= c + ((filterWidth - 1) / 2); n++){
-				
-        if (m < 0) t1 = 0; 
-        else if (m > height - 1) t1 = height - 1; 
-        else t1 = m;
-				
-        if (n < 0) t2 = 0; 
-        else if (n > height - 1) t2 = height - 1; 
-        else t2 = n;
-
-				inMtx[idx] = inPixels[t1 * width + t2];
-				idx++;
-			}
-		}
-
-        for (int i = 0; i < filterWidth * filterWidth; i++)
+        // Compute rank and write to dst
+        int nZeros = n - nOnesBefore[n-1] - bits[n-1];
+        for (int i = 0; i < n; i++)
         {
-          j +=  inMtx[i].x * filter[i];
-          jj += inMtx[i].y * filter[i];
-          jjj += inMtx[i].z * filter[i];
+            int rank;
+            if (bits[i] == 0)
+                rank = i - nOnesBefore[i];
+            else
+                rank = nZeros + nOnesBefore[i];
+            dst[rank] = src[i];
         }
-        outPixels[ r * width + c].x=j;
-        outPixels[ r * width + c].y=jj;
-        outPixels[ r * width + c].z=jjj;  
+
+        // Swap src and dst
+        uint32_t * temp = src;
+        src = dst;
+        dst = temp;
     }
-	
+
+    // Does out array contain results?
+    memcpy(out, src, n * sizeof(uint32_t));
+
+    // Free memory
+    free(originalSrc);
+    free(bits);
+    free(nOnesBefore);
 }
 
-void blurImg(uchar3 * inPixels, int width, int height, float * filter, int filterWidth, 
-		uchar3 * outPixels,
-		bool useDevice=false, dim3 blockSize=dim3(1, 1))
+__global__ void extractBitsKernel(const uint32_t * src, int n, int * bits, int bitIdx)
 {
-	GpuTimer timer;
-	timer.Start();
-	if (useDevice == false)
-	{
-		// TODO
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
 
-	}
-	else // Use device
-	{
-		cudaDeviceProp devProp;
-		cudaGetDeviceProperties(&devProp, 0);
-		printf("GPU name: %s\n", devProp.name);
-		printf("GPU compute capability: %d.%d\n", devProp.major, devProp.minor);
-
-		// TODO
-
-	}
-	timer.Stop();
-	float time = timer.Elapsed();
-	printf("Processing time (%s): %f ms\n", 
-    		useDevice == true? "use device" : "use host", time);
+    if (i < n) {
+        bits[i] = (src[i] >> bitIdx) & 1;
+    }
 }
 
-float computeError(uchar3 * a1, uchar3 * a2, int n)
+__global__ void scanKernel(int * in, int n, int * out, volatile int * blkSums)
 {
-	float err = 0;
-	for (int i = 0; i < n; i++)
+    __shared__ int bi;
+    if (threadIdx.x == 0)
+        bi = atomicAdd(&bCount, 1);
+    __syncthreads();
+
+    extern __shared__ int s_data[];
+	int i1 = bi * 2 * blockDim.x + threadIdx.x;
+	int i2 = i1 + blockDim.x;
+	if (i1 < n)
+		s_data[threadIdx.x] = in[i1];
+	if (i2 < n)
+		s_data[threadIdx.x + blockDim.x] = in[i2];
+	__syncthreads();
+
+	// 2. Each block does scan with data on SMEM
+	// 2.1. Reduction phase
+	for (int stride = 1; stride < 2 * blockDim.x; stride *= 2)
 	{
-		err += abs((int)a1[i].x - (int)a2[i].x);
-		err += abs((int)a1[i].y - (int)a2[i].y);
-		err += abs((int)a1[i].z - (int)a2[i].z);
+		int s_dataIdx = (threadIdx.x + 1) * 2 * stride - 1; // To avoid warp divergence
+		if (s_dataIdx < 2 * blockDim.x)
+			s_data[s_dataIdx] += s_data[s_dataIdx - stride];
+		__syncthreads();
 	}
-	err /= (n * 3);
-	return err;
+	// 2.2. Post-reduction phase
+	for (int stride = blockDim.x / 2; stride > 0; stride /= 2)
+	{
+		int s_dataIdx = (threadIdx.x + 1) * 2 * stride - 1 + stride; // Wow
+		if (s_dataIdx < 2 * blockDim.x)
+			s_data[s_dataIdx] += s_data[s_dataIdx - stride];
+		__syncthreads();
+	}
+
+	if (blkSums != NULL && threadIdx.x == 0)
+		blkSums[bi] = s_data[2 * blockDim.x - 1];
+
+    if (threadIdx.x == 0)
+    {
+        if (bi > 0)
+        {
+            while (bCount1 < bi) {} // Chờ block bi-1
+            blkSums[bi] += blkSums[bi - 1]; // Tính tổng của bi+1 block (0→bi)
+            __threadfence(); // Đảm bảo blkSums được cập nhật trước bCount1
+        }
+        bCount1 += 1; // Bật tín hiệu để block bi+1 biết
+    }
+    __syncthreads();
+
+    if (bi > 0)
+    {
+        s_data[threadIdx.x] += blkSums[bi - 1];
+        s_data[threadIdx.x + blockDim.x] += blkSums[bi - 1];
+    }
+
+    // 3. Each block writes results from SMEM to GMEM
+    if (i1 + 1 < n)
+        out[i1 + 1] = s_data[threadIdx.x];
+    if (i2 + 1 < n)
+        out[i2 + 1] = s_data[threadIdx.x + blockDim.x];
 }
 
-char * concatStr(const char * s1, const char * s2)
+__global__ void computeRankKernel(int * bits, uint32_t * src, uint32_t * dst, int n, int * nOnesBefore, int nZeros)
 {
-    char * result = (char *)malloc(strlen(s1) + strlen(s2) + 1);
-    strcpy(result, s1);
-    strcat(result, s2);
-    return result;
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n)
+    {
+        int rank;
+        if (bits[i] == 0)
+            rank = i - nOnesBefore[i];
+        else
+            rank = nZeros + nOnesBefore[i];
+        dst[rank] = src[i];
+    }
+}
+
+// Parallel Radix Sort
+void sortByDevice(const uint32_t * in, int n, uint32_t * out, int blockSize)
+{
+    // TODO
+
+    int * d_bits, * d_Before, * d_block;
+    int s= n * sizeof(uint32_t);
+    uint32_t * d_src, * d_dst;
+
+    uint32_t * src = (uint32_t *)malloc(s);
+    memcpy(src, in,s);
+     
+    CHECK(cudaMalloc(&d_bits, n * sizeof(int)));
+    CHECK(cudaMalloc(&d_Before, n * sizeof(int)));
+    CHECK(cudaMalloc(&d_src, s));
+    CHECK(cudaMalloc(&d_dst, s));
+
+    int block_data_s = 2 * blockSize;
+    int grid_s = (n - 1) / block_data_s + 1;
+
+    size_t nBytes = n * sizeof(int);
+    int const_0 = 0;
+
+    int * bits = (int *)malloc(n * sizeof(int));
+    int * Before = (int *)malloc(n * sizeof(int));
+    int grid_s2 = (n - 1) / blockSize + 1;
+
+    for (int i = 0; i < sizeof(uint32_t) * 8 ; i++){
+
+        CHECK(cudaMemcpy(d_src, src, s , cudaMemcpyHostToDevice));
+        extractBitsKernel<<<grid_s2, blockSize>>>(d_src, n, d_bits,i);
+		    CHECK(cudaMemcpy(bits, d_bits, n * sizeof(int), cudaMemcpyDeviceToHost));
+
+        CHECK(cudaMemcpyToSymbol(bCount1, &const_0, sizeof(int)));
+        CHECK(cudaMemcpyToSymbol(bCount, &const_0, sizeof(int)));
+
+        if (grid_s > 1){
+            CHECK(cudaMalloc(&d_block, grid_s * sizeof(int)));
+        }
+        else{
+            d_block = NULL;
+        }
+
+        size_t smem = block_data_s * sizeof(int);
+        scanKernel<<<grid_s, blockSize, smem>>>(d_bits, n, d_Before, d_block);
+        cudaDeviceSynchronize();
+        CHECK(cudaGetLastError());
+        CHECK(cudaMemcpy(Before, d_Before, nBytes, cudaMemcpyDeviceToHost));
+
+        int nZeros = n - Before[n - 1] - bits[n - 1];
+        computeRankKernel<<<grid_s2, blockSize>>>(d_bits, d_src, d_dst, n, d_Before, nZeros);
+        
+        uint32_t * dst = out;
+        CHECK(cudaMemcpy(dst, d_dst, s, cudaMemcpyDeviceToHost));
+
+        uint32_t * temp = src;
+        src = dst;
+        dst = temp;
+    }
+
+    memcpy(out, src, s);
+
+    free(bits);
+    free(Before);
+
+    CHECK(cudaFree(d_src));
+    CHECK(cudaFree(d_dst));
+    CHECK(cudaFree(d_bits));
+    CHECK(cudaFree(d_block));
+}
+
+// Radix Sort
+void sort(const uint32_t * in, int n, 
+        uint32_t * out, 
+        bool useDevice=false, int blockSize=1)
+{
+    GpuTimer timer; 
+    timer.Start();
+
+    if (useDevice == false)
+    {
+    	printf("\nRadix Sort by host\n");
+        sortByHost(in, n, out);
+    }
+    else // use device
+    {
+    	printf("\nRadix Sort by device\n");
+        sortByDevice(in, n, out, blockSize);
+    }
+
+    timer.Stop();
+    printf("Time: %.3f ms\n", timer.Elapsed());
+}
+
+void printDeviceInfo()
+{
+    cudaDeviceProp devProv;
+    CHECK(cudaGetDeviceProperties(&devProv, 0));
+    printf("**********GPU info**********\n");
+    printf("Name: %s\n", devProv.name);
+    printf("Compute capability: %d.%d\n", devProv.major, devProv.minor);
+    printf("Num SMs: %d\n", devProv.multiProcessorCount);
+    printf("Max num threads per SM: %d\n", devProv.maxThreadsPerMultiProcessor); 
+    printf("Max num warps per SM: %d\n", devProv.maxThreadsPerMultiProcessor / devProv.warpSize);
+    printf("GMEM: %zu byte\n", devProv.totalGlobalMem);
+    printf("SMEM per SM: %zu byte\n", devProv.sharedMemPerMultiprocessor);
+    printf("SMEM per block: %zu byte\n", devProv.sharedMemPerBlock);
+    printf("****************************\n");
+}
+
+void checkCorrectness(uint32_t * out, uint32_t * correctOut, int n)
+{
+    for (int i = 0; i < n; i++)
+    {
+        if (out[i] != correctOut[i])
+        {
+            printf("INCORRECT :(\n");
+            return;
+        }
+    }
+    printf("CORRECT :)\n");
+}
+
+void printArray(uint32_t * a, int n)
+{
+    for (int i = 0; i < n; i++)
+        printf("%i ", a[i]);
+    printf("\n");
 }
 
 int main(int argc, char ** argv)
 {
-	if (argc != 4 && argc != 6)
-	{
-		printf("The number of arguments is invalid\n");
-		return EXIT_FAILURE;
-	}
+    // PRINT OUT DEVICE INFO
+    printDeviceInfo();
 
-	// Read input image file
-	int width, height;
-	uchar3 * inPixels;
-	readPnm(argv[1], width, height, inPixels);
-	printf("Image size (width x height): %i x %i\n\n", width, height);
+    // SET UP INPUT SIZE
+    // int n = 50; // For test by eye
+    int n = (1 << 24) + 1;
+    printf("\nInput size: %d\n", n);
 
-	// Read correct output image file
-	int correctWidth, correctHeight;
-	uchar3 * correctOutPixels;
-	readPnm(argv[3], correctWidth, correctHeight, correctOutPixels);
-	if (correctWidth != width || correctHeight != height)
-	{
-		printf("The shape of the correct output image is invalid\n");
-		return EXIT_FAILURE;
-	}
+    // ALLOCATE MEMORIES
+    size_t bytes = n * sizeof(uint32_t);
+    uint32_t * in = (uint32_t *)malloc(bytes);
+    uint32_t * out = (uint32_t *)malloc(bytes); // Device result
+    uint32_t * correctOut = (uint32_t *)malloc(bytes); // Host result
 
-	// Set up a simple filter with blurring effect 
-	int filterWidth = 9;
-	float * filter = (float *)malloc(filterWidth * filterWidth * sizeof(float));
-	for (int filterR = 0; filterR < filterWidth; filterR++)
-	{
-		for (int filterC = 0; filterC < filterWidth; filterC++)
-		{
-			filter[filterR * filterWidth + filterC] = 1. / (filterWidth * filterWidth);
-		}
-	}
+    // SET UP INPUT DATA
+    for (int i = 0; i < n; i++)
+    {
+        // in[i] = rand() % 255; // For test by eye
+        in[i] = rand();
+    }
+    // printArray(in, n); // For test by eye
 
-	// Blur input image using host
-	uchar3 * hostOutPixels = (uchar3 *)malloc(width * height * sizeof(uchar3)); 
-	blurImg(inPixels, width, height, filter, filterWidth, hostOutPixels);
-	
-	// Compute mean absolute error between host result and correct result
-	float hostErr = computeError(hostOutPixels, correctOutPixels, width * height);
-	printf("Error: %f\n\n", hostErr);
+    // DETERMINE BLOCK SIZE
+    int blockSize = 512; // Default 
+    if (argc == 2)
+        blockSize = atoi(argv[1]);
 
-	// Blur input image using device
-	uchar3 * deviceOutPixels = (uchar3 *)malloc(width * height * sizeof(uchar3));
-	dim3 blockSize(32, 32); // Default
-	if (argc == 6)
-	{
-		blockSize.x = atoi(argv[4]);
-		blockSize.y = atoi(argv[5]);
-	}  
-	blurImg(inPixels, width, height, filter, filterWidth, deviceOutPixels, true, blockSize);
+    // SORT BY HOST
+    sort(in, n, correctOut);
+    // printArray(correctOut, n); // For test by eye
+    
+    // SORT BY DEVICE
+    sort(in, n, out, true, blockSize);
+    // printArray(out, n); // For test by eye
+    checkCorrectness(out, correctOut, n);
 
-	// Compute mean absolute error between device result and correct result
-	float deviceErr = computeError(deviceOutPixels, correctOutPixels, width * height);
-	printf("Error: %f\n\n", deviceErr);
-
-	// Write results to files
-	char * outFileNameBase = strtok(argv[2], "."); // Get rid of extension
-	writePnm(hostOutPixels, width, height, concatStr(outFileNameBase, "_host.pnm"));
-	writePnm(deviceOutPixels, width, height, concatStr(outFileNameBase, "_device.pnm"));
-
-	// Free memories
-	free(inPixels);
-	free(correctOutPixels);
-	free(hostOutPixels);
-	free(deviceOutPixels);
-	free(filter);
+    // FREE MEMORIES
+    free(in);
+    free(out);
+    free(correctOut);
+    
+    return EXIT_SUCCESS;
 }
