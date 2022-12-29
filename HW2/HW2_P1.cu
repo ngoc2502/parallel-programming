@@ -2,7 +2,7 @@
 
 #define CHECK(call)\
 {\
-    const cudaError_t error = call;\
+    const cudaError_t error = call;\  
     if (error != cudaSuccess)\
     {\
         fprintf(stderr, "Error: %s:%d, ", __FILE__, __LINE__);\
@@ -52,12 +52,38 @@ struct GpuTimer
 __global__ void reduceBlksKernel1(int * in, int n, int * out)
 {
 	// TODO
+    int i = blockIdx.x*blockDim.x*2 + threadId.x*2;
 
+    for (int stride =1; stride< 2*blockDim.x;stride*=2){
+        if ((threadIdx.x % stride)==0){
+            if (i+stride<n){
+                in[i] += in[i+stride];
+            }
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0){
+        out[blockIdx.x]= in [blockIdx.x*blockDim.x*2];
+    }
 }
 
 __global__ void reduceBlksKernel2(int * in, int n, int * out)
 {
 	// TODO
+    int numElemBeforeBlk= blockIdx.x*blockDim.x*2;
+    for (int stride=1;stride<2*blockDim.x;stride*=2){
+        int i= numElemBeforeBlk + threadIdx.x *2*stride;
+        if (threadIdx.x< blockDim.x<stride){
+            if (i+stride<n){
+                in[i]+= in [i+stride]
+            }
+        }
+        __syncthreads();
+    }
+    if (threadIdx.x ==0){
+        out[blockIdx.x] = in[numElemBeforeBlk];
+    }
 
 }
 
