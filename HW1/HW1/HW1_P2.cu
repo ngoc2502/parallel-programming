@@ -119,17 +119,17 @@ __global__ void blurImgKernel(uchar3 * inPixels, int width, int height,
 		uchar3 inMtx[300];
 		int idx = 0;
 		int t1=0, t2=0;
-    float j=0,jj=0,jjj=0;
+        float j=0,jj=0,jjj=0;
 		for (int m = r - ((filterWidth - 1) / 2); m <= r + ((filterWidth - 1) / 2); m++){
 			for (int n = c - ((filterWidth - 1) / 2); n <= c + ((filterWidth - 1) / 2); n++){
-				
-        if (m < 0) t1 = 0; 
-        else if (m > height - 1) t1 = height - 1; 
-        else t1 = m;
-				
-        if (n < 0) t2 = 0; 
-        else if (n > height - 1) t2 = height - 1; 
-        else t2 = n;
+                        
+                if (m < 0) t1 = 0; 
+                else if (m > height - 1) t1 = height - 1; 
+                else t1 = m;
+                        
+                if (n < 0) t2 = 0; 
+                else if (n > height - 1) t2 = height - 1; 
+                else t2 = n;
 
 				inMtx[idx] = inPixels[t1 * width + t2];
 				idx++;

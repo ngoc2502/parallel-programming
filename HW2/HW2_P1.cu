@@ -52,7 +52,7 @@ struct GpuTimer
 __global__ void reduceBlksKernel1(int * in, int n, int * out)
 {
 	// TODO
-    int i = blockIdx.x*blockDim.x*2 + threadIdx.x*2;
+    int i = blockIdx.x*blockDim.x*2 + threadIdx.x*2 ;
 
     for (int stride =1; stride< 2*blockDim.x;stride*=2){
         if ((threadIdx.x % stride)==0){
@@ -90,7 +90,8 @@ __global__ void reduceBlksKernel3(int * in, int n, int * out)
 {
 	// TODO
     int i = blockIdx.x * blockDim.x * 2 + threadIdx.x;
-    for (int stride =1; stride >0 ; stride /=2 )   {
+
+    for (int stride = blockDim.x; stride >0 ; stride /=2 )   {
         if (threadIdx.x<stride){
             if (i+stride<n){
                 in[i] += in [i+ stride];
