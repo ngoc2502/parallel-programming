@@ -80,6 +80,7 @@ void addVec(int *in1, int *in2, int n,
         
         // Pin host memory regions (allocated by malloc)
         // so that we can use cudaMemcpyAsync  
+        
         size_t nBytes = n * sizeof(int);
         CHECK(cudaHostRegister(in1, nBytes, cudaHostRegisterDefault));
         CHECK(cudaHostRegister(in2, nBytes, cudaHostRegisterDefault));
@@ -125,7 +126,7 @@ void addVec(int *in1, int *in2, int n,
                 addVecKernel<<<gridSize,blockSize,0,stream[i]>>>(d_in1+next,d_in2+next,newSize,d_out+next);
                 cudaMemcpyAsync( out+next,d_out+next ,newBytes , cudaMemcpyDeviceToHost, stream[i])
             }
-            
+
             step = i * newSize;
             newSize = n - step;
             newBytes = newSize * sizeof(int);
