@@ -112,16 +112,59 @@ __global__ void blurImgKernel1(uchar3 * inPixels, int width, int height,
         float * filter, int filterWidth, 
         uchar3 * outPixels)
 {
-	// TODO
+	int outPixelsC = blockIdx.x*blockDim.x+ threadIdx.x; 
+	int outPixelsR = blockIdx.y*blockDim.y+ threadIdx.y;
 
+	if (outPixelsC <width && outPixelsC < height){
+
+		for (int filterR = 0; filterR < filterWidth; filterR++)
+				{
+					for (int filterC = 0; filterC < filterWidth; filterC++)
+					{
+						float filterVal = filter[filterR*filterWidth + filterC];
+						int inPixelsR = outPixelsR - filterWidth/2 + filterR;
+						int inPixelsC = outPixelsC - filterWidth/2 + filterC;
+						inPixelsR = min(max(0, inPixelsR), height - 1);
+						inPixelsC = min(max(0, inPixelsC), width - 1);
+						uchar3 inPixel = inPixels[inPixelsR*width + inPixelsC];
+						outPixel.x += filterVal * inPixel.x;
+						outPixel.y += filterVal * inPixel.y;
+						outPixel.z += filterVal * inPixel.z;
+					}
+				}
+				outPixels[outPixelsR*width + outPixelsC] = make_uchar3(outPixel.x, outPixel.y, outPixel.z); 
+	}
 }
 
+// blurImgKernel using SMEM
 __global__ void blurImgKernel2(uchar3 * inPixels, int width, int height, 
         float * filter, int filterWidth, 
         uchar3 * outPixels)
 {
-	// TODO
+	__shared__ int blkData[2*blockDim.x];
+	
+	int outPixelsC = blockIdx.x*blockDim.x+ threadIdx.x; 
+	int outPixelsR = blockIdx.y*blockDim.y+ threadIdx.y;
 
+	if (outPixelsC <width && outPixelsC < height){
+
+		for (int filterR = 0; filterR < filterWidth; filterR++)
+				{
+					for (int filterC = 0; filterC < filterWidth; filterC++)
+					{
+						float filterVal = filter[filterR*filterWidth + filterC];
+						int inPixelsR = outPixelsR - filterWidth/2 + filterR;
+						int inPixelsC = outPixelsC - filterWidth/2 + filterC;
+						inPixelsR = min(max(0, inPixelsR), height - 1);
+						inPixelsC = min(max(0, inPixelsC), width - 1);
+						uchar3 inPixel = inPixels[inPixelsR*width + inPixelsC];
+						outPixel.x += filterVal * inPixel.x;
+						outPixel.y += filterVal * inPixel.y;
+						outPixel.z += filterVal * inPixel.z;
+					}
+				}
+				outPixels[outPixelsR*width + outPixelsC] = make_uchar3(outPixel.x, outPixel.y, outPixel.z); 
+	}
 }
 
 __global__ void blurImgKernel3(uchar3 * inPixels, int width, int height, 
