@@ -141,13 +141,37 @@ __global__ void blurImgKernel2(uchar3 * inPixels, int width, int height,
         float * filter, int filterWidth, 
         uchar3 * outPixels)
 {
-	__shared__ int blkData[2*blockDim.x];
+	extern __shared__ uchar3 s_inPixels[];
 	
 	int outPixelsC = blockIdx.x*blockDim.x+ threadIdx.x; 
 	int outPixelsR = blockIdx.y*blockDim.y+ threadIdx.y;
 
-	if (outPixelsC <width && outPixelsC < height){
+	int s_width = blockDim.x+filterWidth-1;
+	float s_length = s_width* (blockDim.y + filterWidth -1 );
 
+	int nPixelsEachThread = ceil(s_length / (blockDim.x * blockDim.y));
+	int threadIndex = threadIdx.y * blockDim.x + threadIdx.x;
+
+	int firstR = blockIdx.y * blockDim.y - filterWidth / 2;
+	int firstC = blockIdx.x * blockDim.x - filterWidth / 2;
+
+	for (int i = 0; i < nPixelsEachThread; i++)
+	{
+		int pos = threadIndex * nPixelsEachThread + i;
+		if (pos >= s_length) break;
+
+		int inPixelR = pos / s_width + firstR;
+		int inPixelC = pos % s_width + firstC;
+		inPixelR = min(max(0, inPixelR), height - 1);
+		inPixelC = min(max(0, inPixelC), width - 1);
+
+		s_inPixels[pos] = inPixels[inPixelR * width + inPixelC];
+	}
+	__syncthreads();
+
+
+	if (outPixelsC <width && outPixelsC < height){
+		
 		for (int filterR = 0; filterR < filterWidth; filterR++)
 				{
 					for (int filterC = 0; filterC < filterWidth; filterC++)
@@ -157,7 +181,7 @@ __global__ void blurImgKernel2(uchar3 * inPixels, int width, int height,
 						int inPixelsC = outPixelsC - filterWidth/2 + filterC;
 						inPixelsR = min(max(0, inPixelsR), height - 1);
 						inPixelsC = min(max(0, inPixelsC), width - 1);
-						uchar3 inPixel = inPixels[inPixelsR*width + inPixelsC];
+						uchar3 inPixel = s_inPixels[inPixelsR*width + inPixelsC];
 						outPixel.x += filterVal * inPixel.x;
 						outPixel.y += filterVal * inPixel.y;
 						outPixel.z += filterVal * inPixel.z;
@@ -171,8 +195,54 @@ __global__ void blurImgKernel3(uchar3 * inPixels, int width, int height,
         int filterWidth, 
         uchar3 * outPixels)
 {
-	// TODO
+	extern __shared__ uchar3 s_inPixels[];
+	
+	int outPixelsC = blockIdx.x*blockDim.x+ threadIdx.x; 
+	int outPixelsR = blockIdx.y*blockDim.y+ threadIdx.y;
 
+	int s_width = blockDim.x+filterWidth-1;
+	float s_length = s_width* (blockDim.y + filterWidth -1 );
+
+	int nPixelsEachThread = ceil(s_length / (blockDim.x * blockDim.y));
+	int threadIndex = threadIdx.y * blockDim.x + threadIdx.x;
+
+	int firstR = blockIdx.y * blockDim.y - filterWidth / 2;
+	int firstC = blockIdx.x * blockDim.x - filterWidth / 2;
+
+	for (int i = 0; i < nPixelsEachThread; i++)
+	{
+		int pos = threadIndex * nPixelsEachThread + i;
+		if (pos >= s_length) break;
+
+		int inPixelR = pos / s_width + firstR;
+		int inPixelC = pos % s_width + firstC;
+		inPixelR = min(max(0, inPixelR), height - 1);
+		inPixelC = min(max(0, inPixelC), width - 1);
+
+		s_inPixels[pos] = inPixels[inPixelR * width + inPixelC];
+	}
+	__syncthreads();
+
+
+	if (outPixelsC <width && outPixelsC < height){
+		
+		for (int filterR = 0; filterR < filterWidth; filterR++)
+				{
+					for (int filterC = 0; filterC < filterWidth; filterC++)
+					{
+						float filterVal = filter[filterR*filterWidth + filterC];
+						int inPixelsR = outPixelsR - filterWidth/2 + filterR;
+						int inPixelsC = outPixelsC - filterWidth/2 + filterC;
+						inPixelsR = min(max(0, inPixelsR), height - 1);
+						inPixelsC = min(max(0, inPixelsC), width - 1);
+						uchar3 inPixel = s_inPixels[inPixelsR*width + inPixelsC];
+						outPixel.x += filterVal * inPixel.x;
+						outPixel.y += filterVal * inPixel.y;
+						outPixel.z += filterVal * inPixel.z;
+					}
+				}
+				outPixels[outPixelsR*width + outPixelsC] = make_uchar3(outPixel.x, outPixel.y, outPixel.z); 
+	}
 }							
 
 void blurImg(uchar3 * inPixels, int width, int height, float * filter, int filterWidth, 
